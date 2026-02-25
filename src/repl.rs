@@ -3,6 +3,8 @@ use crate::engine::{EvalOutcome, evaluate_line};
 use crate::output::print_value_for_chain;
 use crate::rpc::RpcClient;
 use eyre::Result;
+use rustyline::CompletionType;
+use rustyline::config::Configurer;
 use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
 use rustyline::highlight::Highlighter;
@@ -31,6 +33,7 @@ pub async fn run_repl(
     let modules = rpc.supported_modules().await.unwrap_or_default();
     let helper = CompletionHelper::new(aliases, &modules);
     let mut editor: Editor<CompletionHelper, DefaultHistory> = Editor::new()?;
+    editor.set_completion_type(CompletionType::List);
     editor.set_helper(Some(helper));
     if history_path.exists() {
         let _ = editor.load_history(&history_path);
