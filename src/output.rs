@@ -39,27 +39,17 @@ fn collect_annotations(value: &Value) -> Vec<String> {
 }
 
 fn collect_list_counts(value: &Value) -> Vec<String> {
-    let mut out = Vec::new();
-    walk_list_counts("$", value, &mut out);
-    out
-}
-
-fn walk_list_counts(path: &str, value: &Value, out: &mut Vec<String>) {
     match value {
         Value::Object(map) => {
+            let mut out = Vec::new();
             for (k, v) in map {
-                walk_list_counts(&format!("{path}.{k}"), v, out);
+                if let Value::Array(items) = v {
+                    out.push(format!("$.{k}: {} items", items.len()));
+                }
             }
+            out
         }
-        Value::Array(items) => {
-            if path != "$" {
-                out.push(format!("{path}: {} items", items.len()));
-            }
-            for (idx, v) in items.iter().enumerate() {
-                walk_list_counts(&format!("{path}[{idx}]"), v, out);
-            }
-        }
-        _ => {}
+        _ => Vec::new(),
     }
 }
 
@@ -199,6 +189,16 @@ mod tests {
     #[test]
     fn does_not_duplicate_top_level_array_count() {
         let value = serde_json::json!([1, 2, 3]);
+        let counts = collect_list_counts(&value);
+        assert!(counts.is_empty());
+    }
+
+    #[test]
+    fn does_not_emit_per_item_nested_counts() {
+        let value = serde_json::json!([
+            {"caps": [1, 2, 3]},
+            {"caps": [4]}
+        ]);
         let counts = collect_list_counts(&value);
         assert!(counts.is_empty());
     }
