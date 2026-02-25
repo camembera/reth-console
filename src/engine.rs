@@ -16,33 +16,36 @@ pub async fn evaluate_line(
     rpc: &RpcClient,
     aliases: &BTreeMap<String, String>,
     line: &str,
-    last_result: &mut Option<Value>,
+    last_rpc_result: &mut Option<Value>,
 ) -> Result<EvalOutcome> {
     match parse_input(line)? {
         InputCommand::Empty => Ok(EvalOutcome::Noop),
         InputCommand::Exit => Ok(EvalOutcome::Exit),
         InputCommand::Help => Ok(EvalOutcome::Help),
         InputCommand::Query(expr) => {
-            let value = last_result
-                .as_ref()
-                .ok_or_else(|| eyre!("no last result available for query"))?;
-            let next = apply_query(&expr, value)?;
-            *last_result = Some(next.clone());
+            let next = apply_query_to_last_rpc(&expr, last_rpc_result)?;
             Ok(EvalOutcome::Value(next))
         }
         InputCommand::Rpc { method, params } => {
             let normalized_method = normalize_rpc_method(&method);
             let value = rpc.request_value(&normalized_method, params).await?;
-            *last_result = Some(value.clone());
+            *last_rpc_result = Some(value.clone());
             Ok(EvalOutcome::Value(value))
         }
         InputCommand::Alias(alias) => {
             let method = resolve_alias_method(aliases, &alias);
             let value = rpc.request_value(&method, None).await?;
-            *last_result = Some(value.clone());
+            *last_rpc_result = Some(value.clone());
             Ok(EvalOutcome::Value(value))
         }
     }
+}
+
+fn apply_query_to_last_rpc(expr: &str, last_rpc_result: &Option<Value>) -> Result<Value> {
+    let value = last_rpc_result
+        .as_ref()
+        .ok_or_else(|| eyre!("no last rpc result available for query"))?;
+    apply_query(expr, value)
 }
 
 fn normalize_rpc_method(method: &str) -> String {
@@ -84,19 +87,20 @@ mod tests {
 
     #[test]
     fn query_without_last_result_errors() {
-        let err = match parse_input(".count").unwrap() {
-            InputCommand::Query(expr) => apply_query(&expr, &Value::Null).unwrap_err(),
-            _ => unreachable!(),
-        };
-        assert!(err.to_string().contains("only apply to arrays and objects"));
+        let err = apply_query_to_last_rpc(".count", &None).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("no last rpc result available for query")
+        );
     }
 
     #[test]
-    fn query_updates_last_result_value() {
-        let mut last = Some(json!([{ "n": 1 }, { "n": 2 }]));
-        let next = apply_query(".[1].n", last.as_ref().unwrap()).unwrap();
-        last = Some(next.clone());
-        assert_eq!(next, json!(2));
-        assert_eq!(last, Some(json!(2)));
+    fn query_uses_last_rpc_result_without_mutating_it() {
+        let last = Some(json!([{ "n": 1 }, { "n": 2 }]));
+        let count = apply_query_to_last_rpc(".count", &last).unwrap();
+        let first = apply_query_to_last_rpc(".[0].n", &last).unwrap();
+        assert_eq!(count, json!(2));
+        assert_eq!(first, json!(1));
+        assert_eq!(last, Some(json!([{ "n": 1 }, { "n": 2 }])));
     }
 }

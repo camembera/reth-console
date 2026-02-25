@@ -1,6 +1,6 @@
 use crate::endpoint::ResolvedEndpoint;
 use crate::engine::{EvalOutcome, evaluate_line};
-use crate::output::print_value;
+use crate::output::print_value_for_chain;
 use crate::rpc::RpcClient;
 use eyre::Result;
 use rustyline::completion::{Completer, Pair};
@@ -19,6 +19,7 @@ pub async fn run_repl(
     history_path: PathBuf,
     endpoint: ResolvedEndpoint,
     aliases: &BTreeMap<String, String>,
+    chain_id: Option<u64>,
 ) -> Result<()> {
     std::fs::create_dir_all(
         history_path
@@ -36,10 +37,10 @@ pub async fn run_repl(
     }
 
     println!("reth-console :: {}", endpoint.raw);
-    print_startup_snapshot(rpc).await;
+    print_startup_snapshot(rpc, chain_id).await;
     println!("help: commands | ctrl-d/exit: quit");
 
-    let mut last_result = None;
+    let mut last_rpc_result = None;
     loop {
         let line = editor.readline("reth> ");
         match line {
@@ -47,11 +48,11 @@ pub async fn run_repl(
                 if !line.trim().is_empty() {
                     let _ = editor.add_history_entry(line.as_str());
                 }
-                match evaluate_line(rpc, aliases, &line, &mut last_result).await {
+                match evaluate_line(rpc, aliases, &line, &mut last_rpc_result).await {
                     Ok(EvalOutcome::Noop) => {}
                     Ok(EvalOutcome::Exit) => break,
                     Ok(EvalOutcome::Help) => print_help(aliases),
-                    Ok(EvalOutcome::Value(value)) => print_value(&value),
+                    Ok(EvalOutcome::Value(value)) => print_value_for_chain(&value, chain_id),
                     Err(err) => eprintln!("error: {err}"),
                 }
             }
@@ -65,7 +66,7 @@ pub async fn run_repl(
     Ok(())
 }
 
-async fn print_startup_snapshot(rpc: &RpcClient) {
+async fn print_startup_snapshot(rpc: &RpcClient, chain_id: Option<u64>) {
     let version = rpc
         .request_value("web3_clientVersion", None)
         .await
@@ -88,12 +89,20 @@ async fn print_startup_snapshot(rpc: &RpcClient) {
         .and_then(|v| as_string(&v));
 
     println!(
-        "node :: version={} | net={} | block={} | peers={}",
+        "node :: version={} | net={}{} | block={} | peers={}",
         version.unwrap_or_else(|| "unavailable".to_owned()),
         network.unwrap_or_else(|| "unavailable".to_owned()),
+        chain_emoji(chain_id),
         block.unwrap_or_else(|| "unavailable".to_owned()),
         peers.unwrap_or_else(|| "unavailable".to_owned()),
     );
+}
+
+fn chain_emoji(chain_id: Option<u64>) -> &'static str {
+    match chain_id {
+        Some(80_069) | Some(80_094) => " 🐻",
+        _ => "",
+    }
 }
 
 fn as_string(value: &Value) -> Option<String> {
@@ -120,14 +129,19 @@ fn hex_or_decimal_to_u64(value: &Value) -> Option<u64> {
 
 fn print_help(aliases: &BTreeMap<String, String>) {
     println!("Commands:");
-    println!("  <method> [json_params]");
+    println!("  <method> [json_params]   (RPC call)");
     println!("  <alias>                  (e.g. eth.blockNumber)");
-    println!("  examples:");
-    println!("    eth.blockNumber");
-    println!("    eth.getBalance [\"0xabc...\", \"latest\"]");
-    println!("    eth.getBalance(\"0xabc...\", \"latest\")");
-    println!("  .count | .len | .first | .last | .[0].field | .map(.field)");
+    println!("  TAB                      completion for aliases/methods");
     println!("  help | exit");
+    println!("Queries (run against last RPC result):");
+    println!("  .count | .len | .first | .last | .[0] | .[0].field | .map(.field)");
+    println!("  examples:");
+    println!("    admin.peers");
+    println!("    .count");
+    println!("    .[0]");
+    println!("    .[0].caps");
+    println!("    eth.getBalance [\"0xabc...\", \"latest\"]");
+    println!("Note: query commands do not replace the last RPC result.");
     if !aliases.is_empty() {
         println!("Aliases:");
         for (alias, method) in aliases {
@@ -352,5 +366,13 @@ mod tests {
 
         let (_start3, hits3) = helper.complete("zzz", 3, &ctx).unwrap();
         assert!(hits3.is_empty());
+    }
+
+    #[test]
+    fn adds_bear_emoji_for_bera_chains() {
+        assert_eq!(chain_emoji(Some(80_069)), " 🐻");
+        assert_eq!(chain_emoji(Some(80_094)), " 🐻");
+        assert_eq!(chain_emoji(Some(1)), "");
+        assert_eq!(chain_emoji(None), "");
     }
 }

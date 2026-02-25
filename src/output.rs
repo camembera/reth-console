@@ -1,25 +1,22 @@
 use serde_json::Value;
 
-pub fn print_value(value: &Value) {
-    match value {
-        Value::Array(items) => {
-            println!("{} items", items.len());
-            println!("{}", pretty(value));
-        }
-        _ => {
-            println!("{}", pretty(value));
-        }
-    }
+const DEFAULT_NATIVE_SYMBOL: &str = "ETH";
 
-    let list_counts = collect_list_counts(value);
-    if !list_counts.is_empty() {
-        println!("-- list counts --");
-        for count in list_counts {
-            println!("{count}");
-        }
-    }
+pub fn print_value_for_chain(value: &Value, chain_id: Option<u64>) {
+    print_value_with_symbol(value, native_symbol_for_chain_id(chain_id));
+}
 
-    let annotations = collect_annotations(value);
+pub fn native_symbol_for_chain_id(chain_id: Option<u64>) -> &'static str {
+    match chain_id {
+        Some(80_069) | Some(80_094) => "BERA",
+        _ => DEFAULT_NATIVE_SYMBOL,
+    }
+}
+
+fn print_value_with_symbol(value: &Value, native_symbol: &str) {
+    println!("{}", pretty(value));
+
+    let annotations = collect_annotations_with_symbol(value, native_symbol);
     if !annotations.is_empty() {
         println!("-- interpreted values --");
         for note in annotations {
@@ -32,54 +29,48 @@ fn pretty(value: &Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
 }
 
-fn collect_annotations(value: &Value) -> Vec<String> {
+fn collect_annotations_with_symbol(value: &Value, native_symbol: &str) -> Vec<String> {
     let mut out = Vec::new();
-    walk("$", value, &mut out);
+    walk("$", value, native_symbol, &mut out);
     out
 }
 
-fn collect_list_counts(value: &Value) -> Vec<String> {
-    match value {
-        Value::Object(map) => {
-            let mut out = Vec::new();
-            for (k, v) in map {
-                if let Value::Array(items) = v {
-                    out.push(format!("$.{k}: {} items", items.len()));
-                }
-            }
-            out
-        }
-        _ => Vec::new(),
-    }
-}
-
-fn walk(path: &str, value: &Value, out: &mut Vec<String>) {
+fn walk(path: &str, value: &Value, native_symbol: &str, out: &mut Vec<String>) {
     match value {
         Value::Object(map) => {
             for (k, v) in map {
-                walk(&format!("{path}.{k}"), v, out);
+                walk(&format!("{path}.{k}"), v, native_symbol, out);
             }
         }
         Value::Array(items) => {
             for (idx, v) in items.iter().enumerate() {
-                walk(&format!("{path}[{idx}]"), v, out);
+                walk(&format!("{path}[{idx}]"), v, native_symbol, out);
             }
         }
         Value::String(s) => {
             if let Some(dec) = small_hex_to_dec(s) {
                 out.push(format!("{path}: {s} -> {dec}"));
                 if looks_like_wei(dec) {
-                    out.push(format!("{path}: {dec} wei -> {} ETH", format_eth(dec)));
+                    out.push(format!(
+                        "{path}: {dec} wei -> {} {native_symbol}",
+                        format_eth(dec)
+                    ));
                 }
             }
             if let Some(wei) = decimal_like_wei(s) {
-                out.push(format!("{path}: {wei} wei -> {} ETH", format_eth(wei)));
+                out.push(format!(
+                    "{path}: {wei} wei -> {} {native_symbol}",
+                    format_eth(wei)
+                ));
             }
         }
         Value::Number(n) => {
             if let Some(wei) = n.as_u64().map(u128::from) {
                 if looks_like_wei(wei) {
-                    out.push(format!("{path}: {wei} wei -> {} ETH", format_eth(wei)));
+                    out.push(format!(
+                        "{path}: {wei} wei -> {} {native_symbol}",
+                        format_eth(wei)
+                    ));
                 }
             }
         }
@@ -162,7 +153,7 @@ mod tests {
             "gasUsed": "0x5208",
             "amount": "1000000000000000000"
         });
-        let notes = collect_annotations(&value);
+        let notes = collect_annotations_with_symbol(&value, DEFAULT_NATIVE_SYMBOL);
         assert!(notes.iter().any(|n| n.contains("0x5208 -> 21000")));
         assert!(notes.iter().any(|n| n.contains("1 ETH")));
     }
@@ -170,36 +161,23 @@ mod tests {
     #[test]
     fn annotates_hex_wei_as_eth() {
         let value = serde_json::json!("0x0de0b6b3a7640000");
-        let notes = collect_annotations(&value);
+        let notes = collect_annotations_with_symbol(&value, DEFAULT_NATIVE_SYMBOL);
         assert!(notes.iter().any(|n| n.contains("1000000000000000000")));
         assert!(notes.iter().any(|n| n.contains("1 ETH")));
     }
 
     #[test]
-    fn collects_nested_list_counts() {
-        let value = serde_json::json!({
-            "logs": [{"id": 1}, {"id": 2}],
-            "txs": [1, 2, 3]
-        });
-        let counts = collect_list_counts(&value);
-        assert!(counts.iter().any(|n| n == "$.logs: 2 items"));
-        assert!(counts.iter().any(|n| n == "$.txs: 3 items"));
+    fn detects_bera_native_symbol() {
+        assert_eq!(native_symbol_for_chain_id(Some(80_069)), "BERA");
+        assert_eq!(native_symbol_for_chain_id(Some(80_094)), "BERA");
+        assert_eq!(native_symbol_for_chain_id(Some(1)), "ETH");
+        assert_eq!(native_symbol_for_chain_id(None), "ETH");
     }
 
     #[test]
-    fn does_not_duplicate_top_level_array_count() {
-        let value = serde_json::json!([1, 2, 3]);
-        let counts = collect_list_counts(&value);
-        assert!(counts.is_empty());
-    }
-
-    #[test]
-    fn does_not_emit_per_item_nested_counts() {
-        let value = serde_json::json!([
-            {"caps": [1, 2, 3]},
-            {"caps": [4]}
-        ]);
-        let counts = collect_list_counts(&value);
-        assert!(counts.is_empty());
+    fn annotates_native_symbol_for_chain() {
+        let value = serde_json::json!("1000000000000000000");
+        let notes = collect_annotations_with_symbol(&value, "BERA");
+        assert!(notes.iter().any(|n| n.contains("1 BERA")));
     }
 }

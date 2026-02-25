@@ -3,7 +3,7 @@ use jsonrpsee::server::ServerBuilder;
 use predicates::str::contains;
 
 #[tokio::test(flavor = "multi_thread")]
-async fn exec_prints_array_count() {
+async fn exec_prints_array_json() {
     let server = ServerBuilder::default()
         .build("127.0.0.1:0")
         .await
@@ -30,13 +30,13 @@ async fn exec_prints_array_count() {
         .arg(endpoint)
         .assert()
         .success()
-        .stdout(contains("3 items"));
+        .stdout(contains("\"id\": 3"));
 
     handle.stop().expect("stop server");
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn exec_prints_nested_list_counts() {
+async fn exec_prints_object_with_nested_list() {
     let server = ServerBuilder::default()
         .build("127.0.0.1:0")
         .await
@@ -62,7 +62,7 @@ async fn exec_prints_nested_list_counts() {
         .arg(endpoint)
         .assert()
         .success()
-        .stdout(contains("$.transactions: 3 items"));
+        .stdout(contains("\"transactions\""));
 
     handle.stop().expect("stop server");
 }

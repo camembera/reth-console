@@ -4,7 +4,9 @@
 
 It connects over local IPC, `http(s)`, or `ws(s)`. IPC is the primary path: if no endpoint is provided, it uses `DATADIR/reth.ipc`. Use `--exec` for one-shot calls or start the REPL for an interactive session with history and completion.
 
-The query mini-language is intentionally small: `.count` and `.len`, `.first` and `.last`, indexed access like `.[0]` or `.[0].field`, and `.map(.field)`. Output includes list counts. Top-level arrays print `N items`; nested arrays print a path count such as `$.transactions: 3 items`.
+The query mini-language is intentionally small: `.count` and `.len`, `.first` and `.last`, indexed access like `.[0]` or `.[0].field`, and `.map(.field)`.
+
+In REPL mode, query commands apply to the last RPC result (not the previous query output). Example: `admin.peers`, then `.count`, then `.[0]`.
 
 ## Quickstart
 
