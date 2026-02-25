@@ -144,7 +144,6 @@ fn print_help(aliases: &BTreeMap<String, String>) {
     println!("    .[0]");
     println!("    .[0].caps");
     println!("    eth.getBalance [\"0xabc...\", \"latest\"]");
-    println!("Note: query commands do not replace the last RPC result.");
     if !aliases.is_empty() {
         println!("Aliases:");
         for (alias, method) in aliases {
