@@ -2,22 +2,34 @@
 
 `reth-console` is a standalone attach console for `reth` and `bera-reth`. It is for operator work: connect, run raw RPC, inspect the result, move on. No JavaScript runtime and no web3 object model.
 
-It connects over `http(s)`, `ws(s)`, or local IPC. If no endpoint is provided, it uses `DATADIR/reth.ipc`. Use `--exec` for one-shot calls or start the REPL for an interactive session with history and completion.
+It connects over local IPC, `http(s)`, or `ws(s)`. IPC is the primary path: if no endpoint is provided, it uses `DATADIR/reth.ipc`. Use `--exec` for one-shot calls or start the REPL for an interactive session with history and completion.
 
 The query mini-language is intentionally small: `.count` and `.len`, `.first` and `.last`, indexed access like `.[0]` or `.[0].field`, and `.map(.field)`. Output includes list counts. Top-level arrays print `N items`; nested arrays print a path count such as `$.transactions: 3 items`.
 
 ## Quickstart
 
-Run one command and exit:
+The primary workflow is local IPC against a node on the same machine.
 
 ```bash
-cargo run -- --exec "eth_blockNumber" http://127.0.0.1:8545
+reth-console
 ```
 
-Start REPL mode:
+Run one command and exit over IPC:
 
 ```bash
-cargo run -- http://127.0.0.1:8545
+reth-console --exec "eth.blockNumber"
+```
+
+Use a non-default data directory:
+
+```bash
+reth-console --datadir /path/to/reth
+```
+
+Use an explicit endpoint only when needed:
+
+```bash
+reth-console --exec "eth_blockNumber" http://127.0.0.1:8545
 ```
 
 Example REPL session:
@@ -26,6 +38,13 @@ Example REPL session:
 reth> eth.getLogs [{"fromBlock":"latest","toBlock":"latest","address":"0x..."}]
 reth> .count
 reth> .first
+```
+
+If you are running from source, build once via Make and run the binary directly:
+
+```bash
+make all
+./target/debug/reth-console
 ```
 
 ## CLI
