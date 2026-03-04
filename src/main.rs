@@ -11,6 +11,7 @@ mod rpc;
 use clap::Parser;
 use cli::Cli;
 use serde_json::Value;
+use std::time::Instant;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -38,6 +39,7 @@ async fn main() -> eyre::Result<()> {
         }
     }
 
+    let sentinel_connected_at = Instant::now();
     let sentinel = if let Some(ref sentinel_path) = cfg.sentinel {
         match rpc::RpcClient::connect(
             &endpoint::ResolvedEndpoint {
@@ -81,6 +83,8 @@ async fn main() -> eyre::Result<()> {
             chain_id,
             has_bera_admin,
             bera_admin_status,
+            sentinel.is_some(),
+            sentinel_connected_at,
         )
         .await?;
     }

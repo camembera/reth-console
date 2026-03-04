@@ -35,6 +35,14 @@ fn print_value_with_symbol(value: &Value, native_symbol: &str, raw: bool) {
         println!("{}", status);
         return;
     }
+    if let Some(table) = try_format_peer_scores(value) {
+        println!("{}", table);
+        return;
+    }
+    if let Some(table) = try_format_banned_subnets(value) {
+        println!("{}", table);
+        return;
+    }
 
     println!("{}", pretty(value));
 
@@ -318,6 +326,147 @@ fn try_format_node_status(value: &Value) -> Option<String> {
     Some(output)
 }
 
+fn try_format_peer_scores(value: &Value) -> Option<String> {
+    let scores = value.as_array()?;
+    if scores.is_empty() {
+        return Some("-- no peers scored --".to_string());
+    }
+    
+    let first = scores.first()?;
+    if !first.is_object() {
+        return None;
+    }
+    
+    let obj = first.as_object()?;
+    // Detect if this looks like peer scores: should have fields like peerId, threatScore, node, policies
+    if !obj.contains_key("peerId") && !obj.contains_key("peer_id") {
+        return None;
+    }
+    if !obj.contains_key("threatScore") && !obj.contains_key("threat_score") {
+        return None;
+    }
+    
+    let mut lines = vec![];
+    let header = format!(
+        "{:<18} {:<6} {:<10} {:<14} {:<8}",
+        "PEER", "THREAT", "NODE", "REASON", "POLICIES"
+    );
+    lines.push(header);
+    
+    for score in scores {
+        if let Some(score_obj) = score.as_object() {
+            let peer_id = score_obj
+                .get("peerId")
+                .or_else(|| score_obj.get("peer_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let threat = score_obj
+                .get("threatScore")
+                .or_else(|| score_obj.get("threat_score"))
+                .and_then(|v| v.as_u64())
+                .map(|t| t.to_string())
+                .unwrap_or_else(|| "?".to_string());
+            let node = score_obj
+                .get("node")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let reason = score_obj
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("-");
+            
+            let policies = score_obj
+                .get("policies")
+                .and_then(|v| v.as_array())
+                .map(|p| p.len().to_string())
+                .unwrap_or_else(|| "0".to_string());
+            
+            let peer_short = if peer_id.len() > 12 {
+                format!("{}..{}", &peer_id[..6], &peer_id[peer_id.len()-4..])
+            } else {
+                peer_id.to_string()
+            };
+            let reason_short = if reason.len() > 14 {
+                format!("{}..{}", &reason[..8], &reason[reason.len()-3..])
+            } else {
+                reason.to_string()
+            };
+            
+            let line = format!(
+                "{:<18} {:<6} {:<10} {:<14} {:<8}",
+                peer_short, threat, node, reason_short, policies
+            );
+            lines.push(line);
+        }
+    }
+    
+    Some(lines.join("\n"))
+}
+
+fn try_format_banned_subnets(value: &Value) -> Option<String> {
+    let subnets = value.as_array()?;
+    if subnets.is_empty() {
+        return Some("-- no subnets banned --".to_string());
+    }
+    
+    let first = subnets.first()?;
+    if !first.is_object() {
+        return None;
+    }
+    
+    let obj = first.as_object()?;
+    // Detect if this looks like banned subnets: should have fields like subnet, reason, peers, nodes
+    if !obj.contains_key("subnet") && !obj.contains_key("cidr") {
+        return None;
+    }
+    
+    let mut lines = vec![];
+    let header = format!(
+        "{:<20} {:<14} {:<8} {:<20}",
+        "SUBNET", "REASON", "PEERS", "NODES"
+    );
+    lines.push(header);
+    
+    for subnet in subnets {
+        if let Some(subnet_obj) = subnet.as_object() {
+            let cidr = subnet_obj
+                .get("subnet")
+                .or_else(|| subnet_obj.get("cidr"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let reason = subnet_obj
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("-");
+            let peer_count = subnet_obj
+                .get("peerCount")
+                .or_else(|| subnet_obj.get("peer_count"))
+                .and_then(|v| v.as_u64())
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "?".to_string());
+            let nodes = subnet_obj
+                .get("nodes")
+                .and_then(|v| v.as_array())
+                .map(|n| n.len().to_string())
+                .unwrap_or_else(|| "?".to_string());
+            
+            let reason_short = if reason.len() > 14 {
+                format!("{}..{}", &reason[..8], &reason[reason.len()-3..])
+            } else {
+                reason.to_string()
+            };
+            
+            let line = format!(
+                "{:<20} {:<14} {:<8} {:<20}",
+                cidr, reason_short, peer_count, nodes
+            );
+            lines.push(line);
+        }
+    }
+    
+    Some(lines.join("\n"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -377,5 +526,58 @@ mod tests {
         let value = serde_json::json!("1000000000000000000");
         let notes = collect_annotations_with_symbol(&value, "BERA");
         assert!(notes.iter().any(|n| n.contains("1 BERA")));
+    }
+
+    #[test]
+    fn formats_peer_scores_table() {
+        let scores = serde_json::json!([
+            {
+                "peerId": "0xabcdef1234567890abcdef1234567890abcdef12",
+                "threatScore": 150,
+                "node": "node-1",
+                "reason": "stale_head",
+                "policies": ["stale_head", "subnet_concentration"]
+            }
+        ]);
+        let formatted = try_format_peer_scores(&scores);
+        assert!(formatted.is_some());
+        let formatted_str = formatted.unwrap();
+        assert!(formatted_str.contains("PEER"));
+        assert!(formatted_str.contains("THREAT"));
+        assert!(formatted_str.contains("0xabcd..ef12"));
+        assert!(formatted_str.contains("150"));
+    }
+
+    #[test]
+    fn formats_banned_subnets_table() {
+        let subnets = serde_json::json!([
+            {
+                "subnet": "192.168.1.0/24",
+                "reason": "subnet_concentration",
+                "peerCount": 5,
+                "nodes": ["node-1", "node-2"]
+            }
+        ]);
+        let formatted = try_format_banned_subnets(&subnets);
+        assert!(formatted.is_some());
+        let formatted_str = formatted.unwrap();
+        assert!(formatted_str.contains("SUBNET"));
+        assert!(formatted_str.contains("PEERS"));
+        assert!(formatted_str.contains("192.168.1.0/24"));
+        assert!(formatted_str.contains("5"));
+    }
+
+    #[test]
+    fn handles_empty_peer_scores_gracefully() {
+        let empty_scores = serde_json::json!([]);
+        let formatted = try_format_peer_scores(&empty_scores);
+        assert_eq!(formatted, Some("-- no peers scored --".to_string()));
+    }
+
+    #[test]
+    fn handles_empty_banned_subnets_gracefully() {
+        let empty_subnets = serde_json::json!([]);
+        let formatted = try_format_banned_subnets(&empty_subnets);
+        assert_eq!(formatted, Some("-- no subnets banned --".to_string()));
     }
 }

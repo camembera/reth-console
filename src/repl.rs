@@ -15,6 +15,7 @@ use rustyline::{Context, Editor, Helper};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::time::Instant;
 
 pub async fn run_repl(
     rpc: &RpcClient,
@@ -25,6 +26,8 @@ pub async fn run_repl(
     chain_id: Option<u64>,
     has_bera_admin: bool,
     bera_admin_status: Option<Value>,
+    sentinel_connected: bool,
+    sentinel_connected_at: Instant,
 ) -> Result<()> {
     std::fs::create_dir_all(
         history_path
@@ -34,7 +37,7 @@ pub async fn run_repl(
     )?;
 
     let modules = rpc.supported_modules().await.unwrap_or_default();
-    let helper = CompletionHelper::new(aliases, &modules, has_bera_admin);
+    let helper = CompletionHelper::new(aliases, &modules, has_bera_admin, sentinel_connected);
     let mut editor: Editor<CompletionHelper, DefaultHistory> = Editor::new()?;
     editor.set_completion_type(CompletionType::List);
     editor.set_helper(Some(helper));
@@ -43,7 +46,7 @@ pub async fn run_repl(
     }
 
     println!("reth-console :: {}", endpoint.raw);
-    print_startup_snapshot(rpc, chain_id, bera_admin_status.as_ref()).await;
+    print_startup_snapshot(rpc, chain_id, bera_admin_status.as_ref(), sentinel, sentinel_connected_at).await;
     println!("help: commands | ctrl-d/exit: quit");
 
     let mut last_rpc_result = None;
@@ -57,7 +60,7 @@ pub async fn run_repl(
                 match evaluate_line(rpc, sentinel, aliases, &line, &mut last_rpc_result, has_bera_admin).await {
                     Ok(EvalOutcome::Noop) => {}
                     Ok(EvalOutcome::Exit) => break,
-                    Ok(EvalOutcome::Help) => print_help(aliases, has_bera_admin),
+                    Ok(EvalOutcome::Help) => print_help(aliases, has_bera_admin, sentinel_connected),
                     Ok(EvalOutcome::Value(value)) => print_value_for_chain(&value, chain_id),
                     Ok(EvalOutcome::NeedsConfirmation {
                         method,
@@ -90,7 +93,7 @@ pub async fn run_repl(
     Ok(())
 }
 
-async fn print_startup_snapshot(rpc: &RpcClient, chain_id: Option<u64>, bera_admin_status: Option<&Value>) {
+async fn print_startup_snapshot(rpc: &RpcClient, chain_id: Option<u64>, bera_admin_status: Option<&Value>, sentinel: Option<&RpcClient>, sentinel_connected_at: Instant) {
     if let Some(status) = bera_admin_status {
         let client_version = status.get("client").and_then(|v| as_string(v));
         let network_id = status.get("networkId").and_then(|v| as_string(v));
@@ -143,6 +146,34 @@ async fn print_startup_snapshot(rpc: &RpcClient, chain_id: Option<u64>, bera_adm
             peers.unwrap_or_else(|| "unavailable".to_owned()),
         );
     }
+    
+    if let Some(sentinel_client) = sentinel {
+        let uptime_secs = sentinel_connected_at.elapsed().as_secs();
+        let uptime_str = format_uptime(uptime_secs);
+        
+        let node_count = sentinel_client
+            .request_value("sentinel_config", None)
+            .await
+            .ok()
+            .and_then(|v| {
+                v.as_object()
+                    .and_then(|obj| obj.get("nodes"))
+                    .and_then(|nodes| nodes.as_array().map(|a| a.len()))
+            })
+            .unwrap_or(0);
+        
+        println!("sentinel :: up={} | nodes={}", uptime_str, node_count);
+    }
+}
+
+fn format_uptime(secs: u64) -> String {
+    if secs < 60 {
+        format!("{}s", secs)
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else {
+        format!("{}h", secs / 3600)
+    }
 }
 
 fn chain_emoji(chain_id: Option<u64>) -> &'static str {
@@ -174,7 +205,7 @@ fn hex_or_decimal_to_u64(value: &Value) -> Option<u64> {
     }
 }
 
-fn print_help(aliases: &BTreeMap<String, String>, has_bera_admin: bool) {
+fn print_help(aliases: &BTreeMap<String, String>, has_bera_admin: bool, sentinel_connected: bool) {
     println!("Commands:");
     println!("  <method> [json_params]   (RPC call)");
     println!("  <alias>                  (e.g. eth.blockNumber)");
@@ -195,6 +226,13 @@ fn print_help(aliases: &BTreeMap<String, String>, has_bera_admin: bool) {
         println!("  ban \"0xpeerId\"        ban peer (~12h)");
         println!("  penalize \"0xpeerId\" -100   penalize peer by value");
     }
+    if sentinel_connected {
+        println!("Sentinel (when connected):");
+        println!("  scores                 peer threat scores from sentinel");
+        println!("  subnets                banned subnets from sentinel");
+        println!("  poll                   trigger sentinel poll");
+        println!("  dryrun                 toggle sentinel dry-run mode");
+    }
     if !aliases.is_empty() {
         println!("Aliases:");
         for (alias, method) in aliases {
@@ -212,6 +250,7 @@ impl CompletionHelper {
         aliases: &BTreeMap<String, String>,
         modules: &BTreeMap<String, String>,
         has_bera_admin: bool,
+        sentinel_connected: bool,
     ) -> CompletionHelper {
         let mut words = vec![
             "help".to_owned(),
@@ -239,6 +278,11 @@ impl CompletionHelper {
             words.push("beraAdmin.".to_owned());
             words.push("beraAdmin_".to_owned());
             words.extend(default_module_dot_methods("beraAdmin"));
+        }
+        if sentinel_connected {
+            words.push("sentinel.".to_owned());
+            words.push("sentinel_".to_owned());
+            words.extend(default_module_dot_methods("sentinel"));
         }
         words.sort();
         words.dedup();
@@ -292,6 +336,13 @@ fn default_module_dot_methods(module: &str) -> Vec<String> {
             "beraAdmin.nodeStatus",
             "beraAdmin.banPeer",
             "beraAdmin.penalizePeer",
+        ],
+        "sentinel" => vec![
+            "sentinel.peerScores",
+            "sentinel.bannedSubnets",
+            "sentinel.triggerPoll",
+            "sentinel.setDryRun",
+            "sentinel.config",
         ],
         _ => vec![],
     }
@@ -348,7 +399,7 @@ mod tests {
     fn includes_eth_get_completion_words() {
         let aliases = BTreeMap::new();
         let modules = BTreeMap::from([("eth".to_owned(), "1.0".to_owned())]);
-        let helper = CompletionHelper::new(&aliases, &modules, false);
+        let helper = CompletionHelper::new(&aliases, &modules, false, false);
         assert!(helper.words.iter().any(|w| w == "eth.getBlockByNumber"));
         assert!(helper.words.iter().any(|w| w == "eth.getBlockByHash"));
     }
@@ -415,7 +466,7 @@ mod tests {
     fn completion_matches_prefix_and_respects_word_start() {
         let aliases = BTreeMap::from([("bn".to_owned(), "eth_blockNumber".to_owned())]);
         let modules = BTreeMap::from([("eth".to_owned(), "1.0".to_owned())]);
-        let helper = CompletionHelper::new(&aliases, &modules, false);
+        let helper = CompletionHelper::new(&aliases, &modules, false, false);
 
         let history = DefaultHistory::new();
         let ctx = Context::new(&history);
@@ -445,7 +496,7 @@ mod tests {
     fn completion_includes_beraAdmin_methods_when_flag_provided() {
         let aliases = BTreeMap::new();
         let modules = BTreeMap::new();
-        let helper = CompletionHelper::new(&aliases, &modules, true);
+        let helper = CompletionHelper::new(&aliases, &modules, true, false);
         assert!(helper.words.iter().any(|w| w == "beraAdmin.detailedPeers"));
         assert!(helper.words.iter().any(|w| w == "beraAdmin.nodeStatus"));
         assert!(helper.words.iter().any(|w| w == "beraAdmin.banPeer"));
@@ -456,7 +507,7 @@ mod tests {
     fn completion_excludes_beraAdmin_methods_when_flag_false() {
         let aliases = BTreeMap::new();
         let modules = BTreeMap::new();
-        let helper = CompletionHelper::new(&aliases, &modules, false);
+        let helper = CompletionHelper::new(&aliases, &modules, false, false);
         assert!(!helper.words.iter().any(|w| w == "beraAdmin.detailedPeers"));
         assert!(!helper.words.iter().any(|w| w == "beraAdmin.nodeStatus"));
     }
