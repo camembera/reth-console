@@ -22,6 +22,8 @@ pub async fn run_repl(
     endpoint: ResolvedEndpoint,
     aliases: &BTreeMap<String, String>,
     chain_id: Option<u64>,
+    has_bera_admin: bool,
+    bera_admin_status: Option<Value>,
 ) -> Result<()> {
     std::fs::create_dir_all(
         history_path
@@ -31,7 +33,7 @@ pub async fn run_repl(
     )?;
 
     let modules = rpc.supported_modules().await.unwrap_or_default();
-    let helper = CompletionHelper::new(aliases, &modules);
+    let helper = CompletionHelper::new(aliases, &modules, has_bera_admin);
     let mut editor: Editor<CompletionHelper, DefaultHistory> = Editor::new()?;
     editor.set_completion_type(CompletionType::List);
     editor.set_helper(Some(helper));
@@ -40,7 +42,7 @@ pub async fn run_repl(
     }
 
     println!("reth-console :: {}", endpoint.raw);
-    print_startup_snapshot(rpc, chain_id).await;
+    print_startup_snapshot(rpc, chain_id, bera_admin_status.as_ref()).await;
     println!("help: commands | ctrl-d/exit: quit");
 
     let mut last_rpc_result = None;
@@ -51,11 +53,29 @@ pub async fn run_repl(
                 if !line.trim().is_empty() {
                     let _ = editor.add_history_entry(line.as_str());
                 }
-                match evaluate_line(rpc, aliases, &line, &mut last_rpc_result).await {
+                match evaluate_line(rpc, aliases, &line, &mut last_rpc_result, has_bera_admin).await {
                     Ok(EvalOutcome::Noop) => {}
                     Ok(EvalOutcome::Exit) => break,
-                    Ok(EvalOutcome::Help) => print_help(aliases),
+                    Ok(EvalOutcome::Help) => print_help(aliases, has_bera_admin),
                     Ok(EvalOutcome::Value(value)) => print_value_for_chain(&value, chain_id),
+                    Ok(EvalOutcome::NeedsConfirmation {
+                        method,
+                        params,
+                        warning,
+                    }) => {
+                        eprintln!("{}", warning);
+                        match editor.readline("confirm [y/N]: ") {
+                            Ok(resp) if resp.trim().eq_ignore_ascii_case("y") => {
+                                match rpc.request_value(&method, params).await {
+                                    Ok(value) => {
+                                        print_value_for_chain(&value, chain_id);
+                                    }
+                                    Err(err) => eprintln!("error: {err}"),
+                                }
+                            }
+                            _ => eprintln!("cancelled"),
+                        }
+                    }
                     Err(err) => eprintln!("error: {err}"),
                 }
             }
@@ -69,36 +89,59 @@ pub async fn run_repl(
     Ok(())
 }
 
-async fn print_startup_snapshot(rpc: &RpcClient, chain_id: Option<u64>) {
-    let version = rpc
-        .request_value("web3_clientVersion", None)
-        .await
-        .ok()
-        .and_then(|v| as_string(&v));
-    let block = rpc
-        .request_value("eth_blockNumber", None)
-        .await
-        .ok()
-        .and_then(|v| hex_or_decimal_to_u64(&v).map(|n| n.to_string()));
-    let peers = rpc
-        .request_value("net_peerCount", None)
-        .await
-        .ok()
-        .and_then(|v| hex_or_decimal_to_u64(&v).map(|n| n.to_string()));
-    let network = rpc
-        .request_value("net_version", None)
-        .await
-        .ok()
-        .and_then(|v| as_string(&v));
+async fn print_startup_snapshot(rpc: &RpcClient, chain_id: Option<u64>, bera_admin_status: Option<&Value>) {
+    if let Some(status) = bera_admin_status {
+        let client_version = status.get("client").and_then(|v| as_string(v));
+        let network_id = status.get("networkId").and_then(|v| as_string(v));
+        let head_number = status.get("head").and_then(|v| as_string(v));
+        let peer_count_total = status.get("peerCountTotal").and_then(|v| hex_or_decimal_to_u64(v));
+        let peer_count_inbound = status.get("peerCountInbound").and_then(|v| hex_or_decimal_to_u64(v));
+        let peer_count_outbound = status.get("peerCountOutbound").and_then(|v| hex_or_decimal_to_u64(v));
+        
+        let peers_str = if let (Some(in_count), Some(out_count)) = (peer_count_inbound, peer_count_outbound) {
+            format!("peers={} (in={} out={})", peer_count_total.unwrap_or(0), in_count, out_count)
+        } else {
+            format!("peers={}", peer_count_total.unwrap_or(0))
+        };
+        
+        println!(
+            "node :: {} | net={} 🐻⭐ | block={} | {}",
+            client_version.unwrap_or_else(|| "unavailable".to_owned()),
+            network_id.unwrap_or_else(|| "unavailable".to_owned()),
+            head_number.unwrap_or_else(|| "unavailable".to_owned()),
+            peers_str
+        );
+    } else {
+        let version = rpc
+            .request_value("web3_clientVersion", None)
+            .await
+            .ok()
+            .and_then(|v| as_string(&v));
+        let block = rpc
+            .request_value("eth_blockNumber", None)
+            .await
+            .ok()
+            .and_then(|v| hex_or_decimal_to_u64(&v).map(|n| n.to_string()));
+        let peers = rpc
+            .request_value("net_peerCount", None)
+            .await
+            .ok()
+            .and_then(|v| hex_or_decimal_to_u64(&v).map(|n| n.to_string()));
+        let network = rpc
+            .request_value("net_version", None)
+            .await
+            .ok()
+            .and_then(|v| as_string(&v));
 
-    println!(
-        "node :: version={} | net={}{} | block={} | peers={}",
-        version.unwrap_or_else(|| "unavailable".to_owned()),
-        network.unwrap_or_else(|| "unavailable".to_owned()),
-        chain_emoji(chain_id),
-        block.unwrap_or_else(|| "unavailable".to_owned()),
-        peers.unwrap_or_else(|| "unavailable".to_owned()),
-    );
+        println!(
+            "node :: version={} | net={}{} | block={} | peers={}",
+            version.unwrap_or_else(|| "unavailable".to_owned()),
+            network.unwrap_or_else(|| "unavailable".to_owned()),
+            chain_emoji(chain_id),
+            block.unwrap_or_else(|| "unavailable".to_owned()),
+            peers.unwrap_or_else(|| "unavailable".to_owned()),
+        );
+    }
 }
 
 fn chain_emoji(chain_id: Option<u64>) -> &'static str {
@@ -130,7 +173,7 @@ fn hex_or_decimal_to_u64(value: &Value) -> Option<u64> {
     }
 }
 
-fn print_help(aliases: &BTreeMap<String, String>) {
+fn print_help(aliases: &BTreeMap<String, String>, has_bera_admin: bool) {
     println!("Commands:");
     println!("  <method> [json_params]   (RPC call)");
     println!("  <alias>                  (e.g. eth.blockNumber)");
@@ -144,6 +187,13 @@ fn print_help(aliases: &BTreeMap<String, String>) {
     println!("    .[0]");
     println!("    .[0].caps");
     println!("    eth.getBalance [\"0xabc...\", \"latest\"]");
+    if has_bera_admin {
+        println!("beraAdmin (when detected):");
+        println!("  peers                 detailed peer table");
+        println!("  status                node identity and sync state");
+        println!("  ban \"0xpeerId\"        ban peer (~12h)");
+        println!("  penalize \"0xpeerId\" -100   penalize peer by value");
+    }
     if !aliases.is_empty() {
         println!("Aliases:");
         for (alias, method) in aliases {
@@ -160,6 +210,7 @@ impl CompletionHelper {
     fn new(
         aliases: &BTreeMap<String, String>,
         modules: &BTreeMap<String, String>,
+        has_bera_admin: bool,
     ) -> CompletionHelper {
         let mut words = vec![
             "help".to_owned(),
@@ -182,6 +233,11 @@ impl CompletionHelper {
             words.push(format!("{module}."));
             words.push(format!("{module}_"));
             words.extend(default_module_dot_methods(module));
+        }
+        if has_bera_admin {
+            words.push("beraAdmin.".to_owned());
+            words.push("beraAdmin_".to_owned());
+            words.extend(default_module_dot_methods("beraAdmin"));
         }
         words.sort();
         words.dedup();
@@ -229,6 +285,12 @@ fn default_module_dot_methods(module: &str) -> Vec<String> {
             "debug.traceBlockByHash",
             "debug.traceBlockByNumber",
             "debug.traceTransaction",
+        ],
+        "beraAdmin" => vec![
+            "beraAdmin.detailedPeers",
+            "beraAdmin.nodeStatus",
+            "beraAdmin.banPeer",
+            "beraAdmin.penalizePeer",
         ],
         _ => vec![],
     }
@@ -285,7 +347,7 @@ mod tests {
     fn includes_eth_get_completion_words() {
         let aliases = BTreeMap::new();
         let modules = BTreeMap::from([("eth".to_owned(), "1.0".to_owned())]);
-        let helper = CompletionHelper::new(&aliases, &modules);
+        let helper = CompletionHelper::new(&aliases, &modules, false);
         assert!(helper.words.iter().any(|w| w == "eth.getBlockByNumber"));
         assert!(helper.words.iter().any(|w| w == "eth.getBlockByHash"));
     }
@@ -352,7 +414,7 @@ mod tests {
     fn completion_matches_prefix_and_respects_word_start() {
         let aliases = BTreeMap::from([("bn".to_owned(), "eth_blockNumber".to_owned())]);
         let modules = BTreeMap::from([("eth".to_owned(), "1.0".to_owned())]);
-        let helper = CompletionHelper::new(&aliases, &modules);
+        let helper = CompletionHelper::new(&aliases, &modules, false);
 
         let history = DefaultHistory::new();
         let ctx = Context::new(&history);
@@ -376,5 +438,25 @@ mod tests {
         assert_eq!(chain_emoji(Some(80_094)), " 🐻");
         assert_eq!(chain_emoji(Some(1)), "");
         assert_eq!(chain_emoji(None), "");
+    }
+
+    #[test]
+    fn completion_includes_beraAdmin_methods_when_flag_provided() {
+        let aliases = BTreeMap::new();
+        let modules = BTreeMap::new();
+        let helper = CompletionHelper::new(&aliases, &modules, true);
+        assert!(helper.words.iter().any(|w| w == "beraAdmin.detailedPeers"));
+        assert!(helper.words.iter().any(|w| w == "beraAdmin.nodeStatus"));
+        assert!(helper.words.iter().any(|w| w == "beraAdmin.banPeer"));
+        assert!(helper.words.iter().any(|w| w == "beraAdmin.penalizePeer"));
+    }
+
+    #[test]
+    fn completion_excludes_beraAdmin_methods_when_flag_false() {
+        let aliases = BTreeMap::new();
+        let modules = BTreeMap::new();
+        let helper = CompletionHelper::new(&aliases, &modules, false);
+        assert!(!helper.words.iter().any(|w| w == "beraAdmin.detailedPeers"));
+        assert!(!helper.words.iter().any(|w| w == "beraAdmin.nodeStatus"));
     }
 }

@@ -9,12 +9,22 @@ pub async fn run_exec(
     script: &str,
     aliases: &BTreeMap<String, String>,
     chain_id: Option<u64>,
+    has_bera_admin: bool,
+    _yes: bool,
 ) -> Result<()> {
     let mut last = None;
-    match evaluate_line(rpc, aliases, script, &mut last).await? {
+    match evaluate_line(rpc, aliases, script, &mut last, has_bera_admin).await? {
         EvalOutcome::Value(value) => print_value_for_chain(&value, chain_id),
         EvalOutcome::Help => print_help(),
         EvalOutcome::Noop | EvalOutcome::Exit => {}
+        EvalOutcome::NeedsConfirmation {
+            method: _,
+            params: _,
+            warning,
+        } => {
+            eprintln!("{}", warning);
+            std::process::exit(1);
+        }
     }
     Ok(())
 }

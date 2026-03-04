@@ -56,6 +56,8 @@ mod tests {
             exec: None,
             http_headers: vec![],
             rpc_aliases: BTreeMap::new(),
+            raw: false,
+            yes: false,
         }
     }
 

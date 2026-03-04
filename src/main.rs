@@ -15,7 +15,7 @@ use serde_json::Value;
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     let cli = Cli::parse();
-    let cfg = cli.runtime_config()?;
+    let mut cfg = cli.runtime_config()?;
     let endpoint = endpoint::resolve_endpoint(&cfg)?;
     let rpc = rpc::RpcClient::connect(&endpoint, &cfg.http_headers).await?;
     let chain_id = rpc
@@ -24,8 +24,22 @@ async fn main() -> eyre::Result<()> {
         .ok()
         .and_then(|v| parse_chain_id(&v));
 
+    let bera_admin_status = rpc.request_value("beraAdmin_nodeStatus", None).await.ok();
+    let has_bera_admin = bera_admin_status.is_some();
+
+    if has_bera_admin {
+        for (alias, method) in [
+            ("peers", "beraAdmin_detailedPeers"),
+            ("status", "beraAdmin_nodeStatus"),
+            ("ban", "beraAdmin_banPeer"),
+            ("penalize", "beraAdmin_penalizePeer"),
+        ] {
+            cfg.rpc_aliases.entry(alias.to_owned()).or_insert(method.to_owned());
+        }
+    }
+
     if let Some(script) = cfg.exec {
-        exec::run_exec(&rpc, &script, &cfg.rpc_aliases, chain_id).await?;
+        exec::run_exec(&rpc, &script, &cfg.rpc_aliases, chain_id, has_bera_admin, cfg.yes).await?;
     } else {
         repl::run_repl(
             &rpc,
@@ -33,6 +47,8 @@ async fn main() -> eyre::Result<()> {
             endpoint,
             &cfg.rpc_aliases,
             chain_id,
+            has_bera_admin,
+            bera_admin_status,
         )
         .await?;
     }

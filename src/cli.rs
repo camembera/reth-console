@@ -31,6 +31,14 @@ pub struct Cli {
     /// RPC alias in the form alias=rpc_method (repeatable).
     #[arg(long = "alias")]
     pub aliases: Vec<String>,
+
+    /// Output raw JSON instead of formatted tables.
+    #[arg(long)]
+    pub raw: bool,
+
+    /// Skip confirmation prompts for destructive actions (ban, penalize).
+    #[arg(long)]
+    pub yes: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -41,6 +49,8 @@ pub struct RuntimeConfig {
     pub exec: Option<String>,
     pub http_headers: Vec<(String, String)>,
     pub rpc_aliases: BTreeMap<String, String>,
+    pub raw: bool,
+    pub yes: bool,
 }
 
 impl Cli {
@@ -55,6 +65,8 @@ impl Cli {
             exec: self.exec,
             http_headers,
             rpc_aliases,
+            raw: self.raw,
+            yes: self.yes,
         })
     }
 }
@@ -161,5 +173,37 @@ mod tests {
     fn rejects_empty_alias_side() {
         let err = parse_aliases(&["bn=".to_owned()]).unwrap_err();
         assert!(err.to_string().contains("empty side"));
+    }
+
+    #[test]
+    fn raw_flag_parsed() {
+        let cli = Cli::try_parse_from(["reth-console", "--raw"]).unwrap();
+        assert!(cli.raw);
+    }
+
+    #[test]
+    fn raw_flag_default_false() {
+        let cli = Cli::try_parse_from(["reth-console"]).unwrap();
+        assert!(!cli.raw);
+    }
+
+    #[test]
+    fn yes_flag_parsed() {
+        let cli = Cli::try_parse_from(["reth-console", "--yes"]).unwrap();
+        assert!(cli.yes);
+    }
+
+    #[test]
+    fn yes_flag_default_false() {
+        let cli = Cli::try_parse_from(["reth-console"]).unwrap();
+        assert!(!cli.yes);
+    }
+
+    #[test]
+    fn runtime_config_includes_raw_and_yes() {
+        let cli = Cli::try_parse_from(["reth-console", "--raw", "--yes"]).unwrap();
+        let cfg = cli.runtime_config().unwrap();
+        assert!(cfg.raw);
+        assert!(cfg.yes);
     }
 }

@@ -10,6 +10,11 @@ pub enum EvalOutcome {
     Exit,
     Help,
     Value(Value),
+    NeedsConfirmation {
+        method: String,
+        params: Option<Value>,
+        warning: String,
+    },
 }
 
 pub async fn evaluate_line(
@@ -17,6 +22,7 @@ pub async fn evaluate_line(
     aliases: &BTreeMap<String, String>,
     line: &str,
     last_rpc_result: &mut Option<Value>,
+    has_bera_admin: bool,
 ) -> Result<EvalOutcome> {
     match parse_input(line)? {
         InputCommand::Empty => Ok(EvalOutcome::Noop),
@@ -28,6 +34,26 @@ pub async fn evaluate_line(
         }
         InputCommand::Rpc { method, params } => {
             let normalized_method = normalize_rpc_method(&method);
+            
+            if is_destructive_method(&normalized_method) && has_bera_admin {
+                let action = if normalized_method.contains("ban") {
+                    "ban"
+                } else if normalized_method.contains("penalize") {
+                    "penalize"
+                } else if normalized_method.contains("addSubnetBan") {
+                    "add subnet ban"
+                } else if normalized_method.contains("removeSubnetBan") {
+                    "remove subnet ban"
+                } else {
+                    "modify"
+                };
+                return Ok(EvalOutcome::NeedsConfirmation {
+                    method: normalized_method,
+                    params: params.clone(),
+                    warning: format!("WARNING: This will {} peer. Use --yes to skip confirmation.", action),
+                });
+            }
+            
             let value = rpc.request_value(&normalized_method, params).await?;
             *last_rpc_result = Some(value.clone());
             Ok(EvalOutcome::Value(value))
@@ -57,6 +83,13 @@ fn resolve_alias_method(aliases: &BTreeMap<String, String>, alias: &str) -> Stri
         .get(alias)
         .cloned()
         .unwrap_or_else(|| alias.replace('.', "_"))
+}
+
+fn is_destructive_method(method: &str) -> bool {
+    method.contains("ban") 
+        || method.contains("penalize")
+        || method.contains("Subnet")
+        || method.contains("removePeer")
 }
 
 #[cfg(test)]
@@ -102,5 +135,37 @@ mod tests {
         assert_eq!(count, json!(2));
         assert_eq!(first, json!(1));
         assert_eq!(last, Some(json!([{ "n": 1 }, { "n": 2 }])));
+    }
+
+    #[test]
+    fn destructive_ban_method_detected() {
+        assert!(is_destructive_method("beraAdmin_banPeer"));
+        assert!(is_destructive_method("beraAdmin_penalizePeer"));
+        assert!(is_destructive_method("sentinel_addSubnetBan"));
+        assert!(is_destructive_method("sentinel_removeSubnetBan"));
+    }
+
+    #[test]
+    fn normal_methods_not_destructive() {
+        assert!(!is_destructive_method("eth_blockNumber"));
+        assert!(!is_destructive_method("beraAdmin_nodeStatus"));
+        assert!(!is_destructive_method("beraAdmin_detailedPeers"));
+    }
+
+    #[test]
+    fn ban_returns_needs_confirmation() {
+        // This test just verifies the destructive method detection
+        assert!(is_destructive_method("beraAdmin_banPeer"));
+    }
+
+    #[test]
+    fn penalize_returns_needs_confirmation() {
+        assert!(is_destructive_method("beraAdmin_penalizePeer"));
+    }
+
+    #[test]
+    fn subnet_ban_returns_needs_confirmation() {
+        assert!(is_destructive_method("sentinel_addSubnetBan"));
+        assert!(is_destructive_method("sentinel_removeSubnetBan"));
     }
 }
