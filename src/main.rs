@@ -38,11 +38,43 @@ async fn main() -> eyre::Result<()> {
         }
     }
 
+    let sentinel = if let Some(ref sentinel_path) = cfg.sentinel {
+        match rpc::RpcClient::connect(
+            &endpoint::ResolvedEndpoint {
+                raw: sentinel_path.clone(),
+                transport: endpoint::Transport::Ipc,
+            },
+            &cfg.http_headers,
+        )
+        .await
+        {
+            Ok(client) => Some(client),
+            Err(e) => {
+                eprintln!("warning: sentinel not connected ({e})");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    if sentinel.is_some() {
+        for (alias, method) in [
+            ("scores", "sentinel_peerScores"),
+            ("subnets", "sentinel_bannedSubnets"),
+            ("poll", "sentinel_triggerPoll"),
+            ("dryrun", "sentinel_setDryRun"),
+        ] {
+            cfg.rpc_aliases.entry(alias.to_owned()).or_insert(method.to_owned());
+        }
+    }
+
     if let Some(script) = cfg.exec {
-        exec::run_exec(&rpc, &script, &cfg.rpc_aliases, chain_id, has_bera_admin, cfg.yes).await?;
+        exec::run_exec(&rpc, sentinel.as_ref(), &script, &cfg.rpc_aliases, chain_id, has_bera_admin, cfg.yes).await?;
     } else {
         repl::run_repl(
             &rpc,
+            sentinel.as_ref(),
             cfg.history_path(),
             endpoint,
             &cfg.rpc_aliases,

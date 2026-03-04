@@ -19,6 +19,7 @@ pub enum EvalOutcome {
 
 pub async fn evaluate_line(
     rpc: &RpcClient,
+    sentinel: Option<&RpcClient>,
     aliases: &BTreeMap<String, String>,
     line: &str,
     last_rpc_result: &mut Option<Value>,
@@ -34,6 +35,14 @@ pub async fn evaluate_line(
         }
         InputCommand::Rpc { method, params } => {
             let normalized_method = normalize_rpc_method(&method);
+            
+            // Route sentinel methods to sentinel client
+            if normalized_method.starts_with("sentinel_") {
+                let client = sentinel.ok_or_else(|| eyre!("sentinel: not connected"))?;
+                let value = client.request_value(&normalized_method, params).await?;
+                *last_rpc_result = Some(value.clone());
+                return Ok(EvalOutcome::Value(value));
+            }
             
             if is_destructive_method(&normalized_method) && has_bera_admin {
                 let action = if normalized_method.contains("ban") {
@@ -60,6 +69,15 @@ pub async fn evaluate_line(
         }
         InputCommand::Alias(alias) => {
             let method = resolve_alias_method(aliases, &alias);
+            
+            // Route sentinel aliases to sentinel client
+            if method.starts_with("sentinel_") {
+                let client = sentinel.ok_or_else(|| eyre!("sentinel: not connected"))?;
+                let value = client.request_value(&method, None).await?;
+                *last_rpc_result = Some(value.clone());
+                return Ok(EvalOutcome::Value(value));
+            }
+            
             let value = rpc.request_value(&method, None).await?;
             *last_rpc_result = Some(value.clone());
             Ok(EvalOutcome::Value(value))

@@ -18,6 +18,7 @@ use std::path::PathBuf;
 
 pub async fn run_repl(
     rpc: &RpcClient,
+    sentinel: Option<&RpcClient>,
     history_path: PathBuf,
     endpoint: ResolvedEndpoint,
     aliases: &BTreeMap<String, String>,
@@ -53,7 +54,7 @@ pub async fn run_repl(
                 if !line.trim().is_empty() {
                     let _ = editor.add_history_entry(line.as_str());
                 }
-                match evaluate_line(rpc, aliases, &line, &mut last_rpc_result, has_bera_admin).await {
+                match evaluate_line(rpc, sentinel, aliases, &line, &mut last_rpc_result, has_bera_admin).await {
                     Ok(EvalOutcome::Noop) => {}
                     Ok(EvalOutcome::Exit) => break,
                     Ok(EvalOutcome::Help) => print_help(aliases, has_bera_admin),

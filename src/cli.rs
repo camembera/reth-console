@@ -39,6 +39,10 @@ pub struct Cli {
     /// Skip confirmation prompts for destructive actions (ban, penalize).
     #[arg(long)]
     pub yes: bool,
+
+    /// Path to bera-sentinel IPC socket for sentinel commands.
+    #[arg(long)]
+    pub sentinel: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -51,6 +55,7 @@ pub struct RuntimeConfig {
     pub rpc_aliases: BTreeMap<String, String>,
     pub raw: bool,
     pub yes: bool,
+    pub sentinel: Option<String>,
 }
 
 impl Cli {
@@ -67,6 +72,7 @@ impl Cli {
             rpc_aliases,
             raw: self.raw,
             yes: self.yes,
+            sentinel: self.sentinel,
         })
     }
 }
@@ -205,5 +211,17 @@ mod tests {
         let cfg = cli.runtime_config().unwrap();
         assert!(cfg.raw);
         assert!(cfg.yes);
+    }
+
+    #[test]
+    fn sentinel_flag_parsed() {
+        let cli = Cli::try_parse_from(["reth-console", "--sentinel", "/tmp/sentinel.sock"]).unwrap();
+        assert_eq!(cli.sentinel, Some("/tmp/sentinel.sock".to_string()));
+    }
+
+    #[test]
+    fn sentinel_flag_optional() {
+        let cli = Cli::try_parse_from(["reth-console"]).unwrap();
+        assert!(cli.sentinel.is_none());
     }
 }

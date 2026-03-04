@@ -58,6 +58,7 @@ mod tests {
             rpc_aliases: BTreeMap::new(),
             raw: false,
             yes: false,
+            sentinel: None,
         }
     }
 

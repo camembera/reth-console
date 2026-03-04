@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 
 pub async fn run_exec(
     rpc: &RpcClient,
+    sentinel: Option<&RpcClient>,
     script: &str,
     aliases: &BTreeMap<String, String>,
     chain_id: Option<u64>,
@@ -13,7 +14,7 @@ pub async fn run_exec(
     _yes: bool,
 ) -> Result<()> {
     let mut last = None;
-    match evaluate_line(rpc, aliases, script, &mut last, has_bera_admin).await? {
+    match evaluate_line(rpc, sentinel, aliases, script, &mut last, has_bera_admin).await? {
         EvalOutcome::Value(value) => print_value_for_chain(&value, chain_id),
         EvalOutcome::Help => print_help(),
         EvalOutcome::Noop | EvalOutcome::Exit => {}
