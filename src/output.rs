@@ -154,13 +154,13 @@ fn try_format_detailed_peers(value: &Value) -> Option<String> {
     }
     
     let obj = first.as_object()?;
-    if !obj.contains_key("peerId") || !obj.contains_key("remoteAddr") {
+    if !obj.contains_key("peerId") && !obj.contains_key("peer_id") {
         return None;
     }
     
     let mut lines = vec![];
     let header = format!(
-        "{:<20} {:<20} {:<4} {:<4} {:<6} {:<16} {:<8} {:<10}",
+        "{:<18} {:<18} {:<4} {:<4} {:<6} {:<14} {:<8} {:<10}",
         "PEER", "ADDR", "DIR", "REP", "BLOCK", "CLIENT", "STATE", "PoG"
     );
     lines.push(header);
@@ -169,10 +169,12 @@ fn try_format_detailed_peers(value: &Value) -> Option<String> {
         if let Some(peer_obj) = peer.as_object() {
             let peer_id = peer_obj
                 .get("peerId")
+                .or_else(|| peer_obj.get("peer_id"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("?");
             let addr = peer_obj
                 .get("remoteAddr")
+                .or_else(|| peer_obj.get("remote_addr"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("?");
             let direction = peer_obj
@@ -182,25 +184,28 @@ fn try_format_detailed_peers(value: &Value) -> Option<String> {
                 .unwrap_or("-");
             let reputation = peer_obj
                 .get("reputation")
-                .and_then(|v| v.as_u64())
+                .and_then(|v| v.as_i64())
                 .map(|r| r.to_string())
                 .unwrap_or_else(|| "?".to_string());
             let block = peer_obj
                 .get("latestBlock")
+                .or_else(|| peer_obj.get("latest_block"))
                 .and_then(|v| v.as_u64())
                 .map(|b| b.to_string())
                 .unwrap_or_else(|| "?".to_string());
             let client = peer_obj
                 .get("clientVersion")
+                .or_else(|| peer_obj.get("client_version"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("-");
-            let client_short = if client.len() > 16 {
-                format!("{}..","&client[..13]")
+            let client_short = if client.len() > 14 {
+                format!("{}..{}", &client[..8], &client[client.len()-3..])
             } else {
                 client.to_string()
             };
             let state = peer_obj
                 .get("connectionState")
+                .or_else(|| peer_obj.get("connection_state"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("-");
             
@@ -210,14 +215,10 @@ fn try_format_detailed_peers(value: &Value) -> Option<String> {
                 } else if let Some(pog_obj) = pog.as_object() {
                     let failures = pog_obj
                         .get("failureCount")
+                        .or_else(|| pog_obj.get("failure_count"))
                         .and_then(|v| v.as_u64())
                         .unwrap_or(0);
-                    let confirmations = pog_obj
-                        .get("lastResult")
-                        .and_then(|v| v.as_str())
-                        .map(|_| 1)
-                        .unwrap_or(0);
-                    format!("{}/{}", failures, confirmations)
+                    format!("{}", failures)
                 } else {
                     "-".to_string()
                 }
@@ -226,13 +227,13 @@ fn try_format_detailed_peers(value: &Value) -> Option<String> {
             };
             
             let peer_short = if peer_id.len() > 12 {
-                format!("{}..{}", &peer_id[..8], &peer_id[peer_id.len()-4..])
+                format!("{}..{}", &peer_id[..6], &peer_id[peer_id.len()-4..])
             } else {
                 peer_id.to_string()
             };
             
             let line = format!(
-                "{:<20} {:<20} {:<4} {:<4} {:<6} {:<16} {:<8} {:<10}",
+                "{:<18} {:<18} {:<4} {:<4} {:<6} {:<14} {:<8} {:<10}",
                 peer_short, addr, direction, reputation, block, client_short, state, pog_str
             );
             lines.push(line);
@@ -245,17 +246,22 @@ fn try_format_detailed_peers(value: &Value) -> Option<String> {
 fn try_format_node_status(value: &Value) -> Option<String> {
     let obj = value.as_object()?;
     
-    if !obj.contains_key("chainId") && !obj.contains_key("genesisHash") && !obj.contains_key("headNumber") {
+    if !obj.contains_key("chainId") && !obj.contains_key("chain_id") && 
+       !obj.contains_key("genesisHash") && !obj.contains_key("genesis_hash") && 
+       !obj.contains_key("headNumber") && !obj.contains_key("head_number") {
         return None;
     }
     
     let chain = obj
         .get("chainId")
+        .or_else(|| obj.get("chain_id"))
         .or_else(|| obj.get("networkId"))
+        .or_else(|| obj.get("network_id"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
     let genesis = obj
         .get("genesisHash")
+        .or_else(|| obj.get("genesis_hash"))
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
     let genesis_short = if genesis.len() > 12 {
@@ -265,10 +271,13 @@ fn try_format_node_status(value: &Value) -> Option<String> {
     };
     let head = obj
         .get("headNumber")
+        .or_else(|| obj.get("head_number"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
     let head_hash = obj
-        .get("head")
+        .get("headHash")
+        .or_else(|| obj.get("head_hash"))
+        .or_else(|| obj.get("head"))
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
     let head_hash_short = if head_hash.len() > 12 {
@@ -282,18 +291,22 @@ fn try_format_node_status(value: &Value) -> Option<String> {
         .unwrap_or(false);
     let peers_total = obj
         .get("peerCountTotal")
+        .or_else(|| obj.get("peer_count_total"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
     let peers_in = obj
         .get("peerCountInbound")
+        .or_else(|| obj.get("peer_count_inbound"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
     let peers_out = obj
         .get("peerCountOutbound")
+        .or_else(|| obj.get("peer_count_outbound"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
     let client = obj
         .get("clientVersion")
+        .or_else(|| obj.get("client_version"))
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
     
