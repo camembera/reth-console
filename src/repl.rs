@@ -326,6 +326,7 @@ fn default_module_dot_methods(module: &str) -> Vec<String> {
             "admin.peers",
             "admin.addPeer",
             "admin.removePeer",
+            "admin.removeAllPeers",
         ],
         "debug" => vec![
             "debug.traceBlockByHash",

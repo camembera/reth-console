@@ -80,6 +80,10 @@ pub async fn evaluate_line(
             Ok(EvalOutcome::Value(result))
         }
         InputCommand::Alias(alias) => {
+            if is_remove_all_peers_alias(alias.as_str()) {
+                return run_remove_all_peers(rpc, last_rpc_result).await;
+            }
+
             let method = resolve_alias_method(aliases, &alias);
             
             // Route sentinel aliases to sentinel client
@@ -120,6 +124,33 @@ fn is_destructive_method(method: &str) -> bool {
         || method.contains("penalize")
         || method.contains("Subnet")
         || method.contains("removePeer")
+}
+
+fn is_remove_all_peers_alias(alias: &str) -> bool {
+    matches!(alias, "removeAllPeers" | "admin.removeAllPeers")
+}
+
+async fn run_remove_all_peers(
+    rpc: &RpcClient,
+    last_rpc_result: &mut Option<Value>,
+) -> Result<EvalOutcome> {
+    let peers = rpc.request_value("admin_peers", None).await?;
+    let arr = peers
+        .as_array()
+        .ok_or_else(|| eyre!("admin.peers did not return an array"))?;
+    let mut removed = 0u64;
+    for peer in arr {
+        let enode = peer
+            .get("enode")
+            .and_then(Value::as_str)
+            .ok_or_else(|| eyre!("peer entry missing enode"))?;
+        rpc.request_value("admin_removePeer", Some(serde_json::json!([enode])))
+            .await?;
+        removed += 1;
+    }
+    *last_rpc_result = Some(peers);
+    eprintln!("Removed {} peer(s).", removed);
+    Ok(EvalOutcome::Value(serde_json::json!({ "removed": removed })))
 }
 
 #[cfg(test)]
