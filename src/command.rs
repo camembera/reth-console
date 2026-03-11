@@ -11,6 +11,11 @@ pub enum InputCommand {
         method: String,
         params: Option<Value>,
     },
+    RpcWithQuery {
+        method: String,
+        params: Option<Value>,
+        query: String,
+    },
     Alias(String),
 }
 
@@ -28,10 +33,59 @@ pub fn parse_input(line: &str) -> Result<InputCommand> {
     if line.starts_with('.') {
         return Ok(InputCommand::Query(line.to_owned()));
     }
+    if let Some((rpc_part, query)) = split_rpc_query_tail(line) {
+        let (method, params_raw) = split_method_and_params(rpc_part)?;
+        let params = parse_params(params_raw)?;
+        return Ok(InputCommand::RpcWithQuery { method, params, query });
+    }
     if looks_like_implicit_rpc(line) {
         return parse_rpc(line);
     }
     Ok(InputCommand::Alias(line.to_owned()))
+}
+
+fn split_rpc_query_tail(line: &str) -> Option<(&str, String)> {
+    if line.contains(char::is_whitespace) || line.contains('(') {
+        return None;
+    }
+
+    let query_start = if let Some(p1) = line.find('.') {
+        let before_dot = &line[..p1];
+        if before_dot.contains('_') {
+            // Underscore-style method (e.g. admin_peers): first '.' or '[' is query start.
+            let first_bracket = line.find('[');
+            match first_bracket {
+                Some(b) if b < p1 => Some(b),
+                _ => Some(p1),
+            }
+        } else {
+            // Dot-style method (e.g. admin.peers): consume two segments, remainder is query.
+            let after_p1 = p1 + 1;
+            let seg2_len = line[after_p1..]
+                .find(|c: char| c == '.' || c == '[')
+                .unwrap_or(line.len() - after_p1);
+            let seg2_end = after_p1 + seg2_len;
+            if seg2_end < line.len() {
+                Some(seg2_end)
+            } else {
+                None
+            }
+        }
+    } else {
+        line.find('[')
+    }?;
+
+    let rpc_part = &line[..query_start];
+    let raw_tail = &line[query_start..];
+    if raw_tail.is_empty() {
+        return None;
+    }
+    let query = if raw_tail.starts_with('[') {
+        format!(".{raw_tail}")
+    } else {
+        raw_tail.to_owned()
+    };
+    Some((rpc_part, query))
 }
 
 fn parse_rpc(rest: &str) -> Result<InputCommand> {
@@ -204,5 +258,65 @@ mod tests {
     fn errors_on_invalid_params() {
         let err = parse_input(r#"eth_getBalance [broken"#).unwrap_err();
         assert!(err.to_string().contains("unable to parse params"));
+    }
+
+    #[test]
+    fn chained_dot_count() {
+        let cmd = parse_input("admin.peers.count").unwrap();
+        assert_eq!(
+            cmd,
+            InputCommand::RpcWithQuery {
+                method: "admin.peers".to_owned(),
+                params: None,
+                query: ".count".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn chained_bracket_index_and_field() {
+        let cmd = parse_input("admin.peers[0].caps").unwrap();
+        assert_eq!(
+            cmd,
+            InputCommand::RpcWithQuery {
+                method: "admin.peers".to_owned(),
+                params: None,
+                query: ".[0].caps".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn chained_bracket_only() {
+        let cmd = parse_input("admin.peers[0]").unwrap();
+        assert_eq!(
+            cmd,
+            InputCommand::RpcWithQuery {
+                method: "admin.peers".to_owned(),
+                params: None,
+                query: ".[0]".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn chained_underscore_style() {
+        let cmd = parse_input("admin_peers.count").unwrap();
+        assert_eq!(
+            cmd,
+            InputCommand::RpcWithQuery {
+                method: "admin_peers".to_owned(),
+                params: None,
+                query: ".count".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn no_chain_on_plain_alias() {
+        assert_eq!(
+            parse_input("admin.peers").unwrap(),
+            InputCommand::Alias("admin.peers".to_owned())
+        );
     }
 }

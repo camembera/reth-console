@@ -67,6 +67,18 @@ pub async fn evaluate_line(
             *last_rpc_result = Some(value.clone());
             Ok(EvalOutcome::Value(value))
         }
+        InputCommand::RpcWithQuery { method, params, query } => {
+            let normalized_method = normalize_rpc_method(&method);
+            let value = if normalized_method.starts_with("sentinel_") {
+                let client = sentinel.ok_or_else(|| eyre!("sentinel: not connected"))?;
+                client.request_value(&normalized_method, params).await?
+            } else {
+                rpc.request_value(&normalized_method, params).await?
+            };
+            *last_rpc_result = Some(value.clone());
+            let result = apply_query(&query, &value)?;
+            Ok(EvalOutcome::Value(result))
+        }
         InputCommand::Alias(alias) => {
             let method = resolve_alias_method(aliases, &alias);
             
@@ -185,5 +197,22 @@ mod tests {
     fn subnet_ban_returns_needs_confirmation() {
         assert!(is_destructive_method("sentinel_addSubnetBan"));
         assert!(is_destructive_method("sentinel_removeSubnetBan"));
+    }
+
+    #[test]
+    fn rpc_with_query_stores_raw_result_in_last() {
+        let peers = json!([{"id": "a"}, {"id": "b"}]);
+        let mut last: Option<Value> = None;
+        let count = apply_query(".count", &peers).unwrap();
+        last = Some(peers.clone());
+        assert_eq!(count, json!(2));
+        assert_eq!(last, Some(peers));
+    }
+
+    #[test]
+    fn rpc_with_query_index_and_field() {
+        let peers = json!([{"caps": ["eth/68"]}, {"caps": ["eth/67"]}]);
+        let result = apply_query(".[0].caps", &peers).unwrap();
+        assert_eq!(result, json!(["eth/68"]));
     }
 }
