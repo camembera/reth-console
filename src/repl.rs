@@ -1,6 +1,6 @@
 use crate::endpoint::ResolvedEndpoint;
 use crate::engine::{EvalOutcome, evaluate_line};
-use crate::output::print_value_for_chain;
+use crate::output::print_value_for_chain_raw;
 use crate::rpc::RpcClient;
 use eyre::Result;
 use rustyline::CompletionType;
@@ -24,6 +24,7 @@ pub async fn run_repl(
     endpoint: ResolvedEndpoint,
     aliases: &BTreeMap<String, String>,
     chain_id: Option<u64>,
+    raw: bool,
     has_bera_admin: bool,
     bera_admin_status: Option<Value>,
     sentinel_connected: bool,
@@ -61,7 +62,7 @@ pub async fn run_repl(
                     Ok(EvalOutcome::Noop) => {}
                     Ok(EvalOutcome::Exit) => break,
                     Ok(EvalOutcome::Help) => print_help(aliases, has_bera_admin, sentinel_connected),
-                    Ok(EvalOutcome::Value(value)) => print_value_for_chain(&value, chain_id),
+                    Ok(EvalOutcome::Value(value)) => print_value_for_chain_raw(&value, chain_id, raw),
                     Ok(EvalOutcome::NeedsConfirmation {
                         method,
                         params,
@@ -72,7 +73,7 @@ pub async fn run_repl(
                             Ok(resp) if resp.trim().eq_ignore_ascii_case("y") => {
                                 match rpc.request_value(&method, params).await {
                                     Ok(value) => {
-                                        print_value_for_chain(&value, chain_id);
+                                        print_value_for_chain_raw(&value, chain_id, raw);
                                     }
                                     Err(err) => eprintln!("error: {err}"),
                                 }
@@ -493,7 +494,7 @@ mod tests {
     }
 
     #[test]
-    fn completion_includes_beraAdmin_methods_when_flag_provided() {
+    fn completion_includes_bera_admin_methods_when_flag_provided() {
         let aliases = BTreeMap::new();
         let modules = BTreeMap::new();
         let helper = CompletionHelper::new(&aliases, &modules, true, false);
@@ -504,7 +505,7 @@ mod tests {
     }
 
     #[test]
-    fn completion_excludes_beraAdmin_methods_when_flag_false() {
+    fn completion_excludes_bera_admin_methods_when_flag_false() {
         let aliases = BTreeMap::new();
         let modules = BTreeMap::new();
         let helper = CompletionHelper::new(&aliases, &modules, false, false);

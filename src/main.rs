@@ -72,7 +72,7 @@ async fn main() -> eyre::Result<()> {
     }
 
     if let Some(script) = cfg.exec {
-        exec::run_exec(&rpc, sentinel.as_ref(), &script, &cfg.rpc_aliases, chain_id, has_bera_admin, cfg.yes).await?;
+        exec::run_exec(&rpc, sentinel.as_ref(), &script, &cfg.rpc_aliases, chain_id, cfg.raw, has_bera_admin, cfg.yes).await?;
     } else {
         repl::run_repl(
             &rpc,
@@ -81,6 +81,7 @@ async fn main() -> eyre::Result<()> {
             endpoint,
             &cfg.rpc_aliases,
             chain_id,
+            cfg.raw,
             has_bera_admin,
             bera_admin_status,
             sentinel.is_some(),

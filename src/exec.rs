@@ -1,5 +1,5 @@
 use crate::engine::{EvalOutcome, evaluate_line};
-use crate::output::print_value_for_chain;
+use crate::output::print_value_for_chain_raw;
 use crate::rpc::RpcClient;
 use eyre::Result;
 use std::collections::BTreeMap;
@@ -10,12 +10,13 @@ pub async fn run_exec(
     script: &str,
     aliases: &BTreeMap<String, String>,
     chain_id: Option<u64>,
+    raw: bool,
     has_bera_admin: bool,
     _yes: bool,
 ) -> Result<()> {
     let mut last = None;
     match evaluate_line(rpc, sentinel, aliases, script, &mut last, has_bera_admin).await? {
-        EvalOutcome::Value(value) => print_value_for_chain(&value, chain_id),
+        EvalOutcome::Value(value) => print_value_for_chain_raw(&value, chain_id, raw),
         EvalOutcome::Help => print_help(),
         EvalOutcome::Noop | EvalOutcome::Exit => {}
         EvalOutcome::NeedsConfirmation {
